@@ -1,80 +1,590 @@
-import {ASSETS,PRIORITIES,TEAMS,CATEGORIES,active,assetById,project,linked,elapsed,sortedJobs,seed} from './core.js';
-import {STORAGE_KEY,readStore,commitStore} from './storage.js';
-const $=s=>document.querySelector(s);
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const icons={campus:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',queue:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',history:'<path d="M3 11a9 9 0 1 1 3 8M3 4v7h7M12 7v5l3 2"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',plus:'<path d="M12 5v14M5 12h14"/>',arrow:'<path d="m9 5 7 7-7 7"/>',check:'<path d="m5 12 4 4L19 6"/>',pin:'<path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2"/>',search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',export:'<path d="M12 3v12m-4-4 4 4 4-4M4 15v6h16v-6"/>',close:'<path d="m6 6 12 12M6 18 18 6"/>',fan:'<circle cx="12" cy="12" r="2"/><path d="M11 10C2 3 15 0 14 9M14 12c11-2 6 11 0 3M11 14c-3 11-12 0-3-2"/>',tap:'<path d="M5 9h10a4 4 0 0 1 4 4v3h-5v-2H5V9Zm4 0V5m-3 0h6M3 8v8m14 3v2"/>',desk:'<path d="M3 7h18v5H3zM5 12v8m14-8v8"/>',light:'<path d="M8 15a6 6 0 1 1 8 0v3H8v-3Zm1 6h6M12 1v2"/>',door:'<path d="M5 21V3h14v18H5Zm10-9h.01"/>'};
-const icon=(name,cls='')=>`<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]||icons.info}</svg>`;
-const assetIcon=id=>id.startsWith('FAN')?'fan':id.startsWith('TAP')?'tap':id.startsWith('DESK')?'desk':id.startsWith('LIGHT')?'light':'door';
-const stamp=at=>new Intl.DateTimeFormat('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata',hour12:false}).format(at)+' IST';
-const duration=ms=>{const m=Math.floor(ms/60000);return m<60?`${m}m`:`${Math.floor(m/60)}h ${m%60}m`;};
-const badge=(text,kind)=>`<span class="badge ${kind||text.toLowerCase().replaceAll(' ','-')}"><span aria-hidden="true">●</span> ${esc(text)}</span>`;
-const button=(label,action,extra='',cls='secondary')=>`<button class="${cls}" data-action="${action}" ${extra}>${label}</button>`;
-let doc,loadError='',role='Coordinator',historyCount=null,filter='active',selection='FAN-01',view='campus',busy=false,toastTimer;
-try{doc=readStore(localStorage);}catch(e){loadError=e.message;}
-const currentState=()=>project(doc,historyCount??doc.events.length);
-const now=()=>historyCount===null?Date.now():(doc.events[historyCount-1]?.at??doc.createdAt);
-const canEdit=()=>role==='Coordinator'&&historyCount===null;
-function toast(message){$('#toast').textContent=message;$('#toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('visible'),5500);}
-function route(){const [v,a]=location.hash.slice(1).split('/');view=['campus','queue','history','about'].includes(v)?v:'campus';if(assetById(a))selection=a;render();}
-function navigate(v,a=selection){location.hash=`${v}/${a}`;if(view===v&&selection===a)render();}
-const countActive=s=>s.jobs.filter(active).length;
-function timeline(){return `<section class="timebar" aria-label="Campus history"><div class="time-title">${icon('history')}<div><strong>${historyCount===null?'Live workspace':'History playback'}</strong><span>${historyCount===null?'Step back through every decision':stamp(now())+' · read only'}</span></div></div><div class="time-controls"><button class="square" data-action="previous" aria-label="Previous event" ${historyCount===0?'disabled':''}>←</button><input type="range" id="timeline" aria-label="History event" min="0" max="${doc.events.length}" value="${historyCount??doc.events.length}" aria-valuetext="${historyCount===null?'Now':`Event ${historyCount} of ${doc.events.length}`}" step="1"><button class="square" data-action="next" aria-label="Next event" ${historyCount===null?'disabled':''}>→</button><button class="now-button ${historyCount===null?'selected':''}" data-action="now">Now</button></div></section>`;}
-function header(s){return `<aside class="sidebar"><a href="#campus" class="brand" aria-label="FIXTRACE campus"><span class="brand-mark">F<span>•</span></span><span>FIXTRACE<small>CAMPUS REPAIR DESK</small></span></a><div class="campus-label">${icon('pin')}<span>Practice Campus<small>Fictional school · Ground floor</small></span></div><nav aria-label="Main navigation">${[['campus','Campus overview'],['queue','Repair queue'],['history','Activity log'],['about','About this demo']].map(([id,title])=>`<a href="#${id}/${selection}" aria-label="${title}" class="nav-link ${view===id?'current':''}" ${view===id?'aria-current="page"':''}>${icon(id==='queue'?'queue':id==='history'?'history':id==='about'?'info':'campus')}<span>${title}</span>${id==='queue'?`<span class="nav-count">${countActive(s)}</span>`:''}</a>`).join('')}</nav><div class="sidebar-bottom"><div class="demo-note"><span class="tiny-dot"></span> Synthetic data only<p>Explore freely. Changes stay in this browser.</p></div></div></aside>`;}
-function render(){
-  if(loadError){$('#app').innerHTML=`<main class="recovery"><span class="brand-mark">F</span><h1>Let’s recover your workspace</h1><p role="alert">${esc(loadError)}</p><p>Your stored data has not been overwritten. Export a copy before resetting.</p>${button('Export saved data','export')}${button('Reset synthetic demo','reset','','danger')}</main>`;return;}
-  const s=currentState(),unreviewed=s.reports.filter(r=>r.review==='Unreviewed').length;
-  $('#app').innerHTML=`${header(s)}<div class="workspace"><header class="topbar"><span class="breadcrumb">Campus operations <span>/</span> ${esc({campus:'Overview',queue:'Repair queue',history:'Activity log',about:'About'}[view])}</span><div class="top-actions"><label class="role-label" for="role">Demo role <select id="role"><option ${role==='Coordinator'?'selected':''}>Coordinator</option><option ${role==='Reporter'?'selected':''}>Reporter</option></select></label><span class="avatar" aria-hidden="true">${role==='Coordinator'?'C':'R'}</span></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><p class="eyebrow">${view==='campus'?'A PLACE FOR EVERY REPAIR':view==='queue'?'FROM OBSERVATION TO ACTION':view==='history'?'EVERY DECISION, PRESERVED':'BUILT TO BE UNDERSTOOD'}</p><h1>${{campus:'Keep the campus moving.',queue:'Give every repair a next step.',history:'The story behind the status.',about:'A small tool. A clear purpose.'}[view]}</h1><p class="subtitle">${view==='campus'?'Know what needs attention, who owns it, and what happens next.':view==='queue'?'Review the reports. Link the evidence. Keep the work moving.':view==='history'?'Reports and repair decisions, in the order they happened.':'FIXTRACE is a working demonstration with fictional school data.'}</p></div>${historyCount===null?button(icon('plus')+' Report a problem','report','','primary'):button('Return to live workspace','now','','primary')}</div>${view==='about'?about():`${timeline()}${view==='campus'?campus(s,unreviewed):view==='queue'?queue(s):history(s)}`}</main><footer class="footer"><span>FIXTRACE <span class="muted">/</span> Small repairs. Clear records.</span><span>Local demo · Times in IST</span></footer></div>`;
+import {
+  ASSETS,
+  PRIORITIES,
+  TEAMS,
+  CATEGORIES,
+  active,
+  assetById,
+  project,
+  linked,
+  elapsed,
+  sortedJobs,
+  seed,
+} from "./core.js";
+import { STORAGE_KEY, readStore, commitStore } from "./storage.js";
+const $ = (s) => document.querySelector(s);
+const esc = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
+const icons = {
+  campus:
+    '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  queue: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  history: '<path d="M3 11a9 9 0 1 1 3 8M3 4v7h7M12 7v5l3 2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  arrow: '<path d="m9 5 7 7-7 7"/>',
+  check: '<path d="m5 12 4 4L19 6"/>',
+  pin: '<path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2"/>',
+  search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
+  export: '<path d="M12 3v12m-4-4 4 4 4-4M4 15v6h16v-6"/>',
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  fan: '<circle cx="12" cy="12" r="2"/><path d="M11 10C2 3 15 0 14 9M14 12c11-2 6 11 0 3M11 14c-3 11-12 0-3-2"/>',
+  tap: '<path d="M5 9h10a4 4 0 0 1 4 4v3h-5v-2H5V9Zm4 0V5m-3 0h6M3 8v8m14 3v2"/>',
+  desk: '<path d="M3 7h18v5H3zM5 12v8m14-8v8"/>',
+  light: '<path d="M8 15a6 6 0 1 1 8 0v3H8v-3Zm1 6h6M12 1v2"/>',
+  door: '<path d="M5 21V3h14v18H5Zm10-9h.01"/>',
+};
+const icon = (name, cls = "") =>
+  `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] || icons.info}</svg>`;
+const assetIcon = (id) =>
+  id.startsWith("FAN")
+    ? "fan"
+    : id.startsWith("TAP")
+      ? "tap"
+      : id.startsWith("DESK")
+        ? "desk"
+        : id.startsWith("LIGHT")
+          ? "light"
+          : "door";
+const stamp = (at) =>
+  new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+    hour12: false,
+  }).format(at) + " IST";
+const duration = (ms) => {
+  const m = Math.floor(ms / 60000);
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+};
+const badge = (text, kind) =>
+  `<span class="badge ${kind || text.toLowerCase().replaceAll(" ", "-")}"><span aria-hidden="true">●</span> ${esc(text)}</span>`;
+const button = (label, action, extra = "", cls = "secondary") =>
+  `<button class="${cls}" data-action="${action}" ${extra}>${label}</button>`;
+let doc,
+  loadError = "",
+  role = "Coordinator",
+  historyCount = null,
+  filter = "active",
+  selection = "FAN-01",
+  view = "campus",
+  busy = false,
+  toastTimer;
+try {
+  doc = readStore(localStorage);
+} catch (e) {
+  loadError = e.message;
+}
+const currentState = () => project(doc, historyCount ?? doc.events.length);
+const now = () =>
+  historyCount === null
+    ? Date.now()
+    : (doc.events[historyCount - 1]?.at ?? doc.createdAt);
+const canEdit = () => role === "Coordinator" && historyCount === null;
+function toast(message) {
+  $("#toast").textContent = message;
+  $("#toast").classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("#toast").classList.remove("visible"), 5500);
+}
+function route() {
+  const [v, a] = location.hash.slice(1).split("/");
+  view = ["campus", "queue", "history", "about"].includes(v) ? v : "campus";
+  if (assetById(a)) selection = a;
+  render();
+}
+function navigate(v, a = selection) {
+  location.hash = `${v}/${a}`;
+  if (view === v && selection === a) render();
+}
+const countActive = (s) => s.jobs.filter(active).length;
+function timeline() {
+  return `<section class="timebar" aria-label="Campus history"><div class="time-title">${icon("history")}<div><strong>${historyCount === null ? "Live workspace" : "History playback"}</strong><span>${historyCount === null ? "Step back through every decision" : stamp(now()) + " · read only"}</span></div></div><div class="time-controls"><button class="square" data-action="previous" aria-label="Previous event" ${historyCount === 0 ? "disabled" : ""}>←</button><input type="range" id="timeline" aria-label="History event" min="0" max="${doc.events.length}" value="${historyCount ?? doc.events.length}" aria-valuetext="${historyCount === null ? "Now" : `Event ${historyCount} of ${doc.events.length}`}" step="1"><button class="square" data-action="next" aria-label="Next event" ${historyCount === null ? "disabled" : ""}>→</button><button class="now-button ${historyCount === null ? "selected" : ""}" data-action="now">Now</button></div></section>`;
+}
+function header(s) {
+  return `<aside class="sidebar"><a href="#campus" class="brand" aria-label="FIXTRACE campus"><span class="brand-mark">F<span>•</span></span><span>FIXTRACE<small>CAMPUS REPAIR DESK</small></span></a><div class="campus-label">${icon("pin")}<span>Practice Campus<small>Fictional school · Ground floor</small></span></div><nav aria-label="Main navigation">${[
+    ["campus", "Campus overview"],
+    ["queue", "Repair queue"],
+    ["history", "Activity log"],
+    ["about", "About this demo"],
+  ]
+    .map(
+      ([id, title]) =>
+        `<a href="#${id}/${selection}" aria-label="${title}" class="nav-link ${view === id ? "current" : ""}" ${view === id ? 'aria-current="page"' : ""}>${icon(id === "queue" ? "queue" : id === "history" ? "history" : id === "about" ? "info" : "campus")}<span>${title}</span>${id === "queue" ? `<span class="nav-count">${countActive(s)}</span>` : ""}</a>`,
+    )
+    .join(
+      "",
+    )}</nav><div class="sidebar-bottom"><div class="demo-note"><span class="tiny-dot"></span> Synthetic data only<p>Explore freely. Changes stay in this browser.</p></div></div></aside>`;
+}
+function render() {
+  if (loadError) {
+    $("#app").innerHTML =
+      `<main class="recovery"><span class="brand-mark">F</span><h1>Let’s recover your workspace</h1><p role="alert">${esc(loadError)}</p><p>Your stored data has not been overwritten. Export a copy before resetting.</p>${button("Export saved data", "export")}${button("Reset synthetic demo", "reset", "", "danger")}</main>`;
+    return;
+  }
+  const s = currentState(),
+    unreviewed = s.reports.filter((r) => r.review === "Unreviewed").length;
+  $("#app").innerHTML =
+    `${header(s)}<div class="workspace"><header class="topbar"><span class="breadcrumb">Campus operations <span>/</span> ${esc({ campus: "Overview", queue: "Repair queue", history: "Activity log", about: "About" }[view])}</span><div class="top-actions"><label class="role-label" for="role">Demo role <select id="role"><option ${role === "Coordinator" ? "selected" : ""}>Coordinator</option><option ${role === "Reporter" ? "selected" : ""}>Reporter</option></select></label><span class="avatar" aria-hidden="true">${role === "Coordinator" ? "C" : "R"}</span></div></header><main id="main" tabindex="-1"><div class="page-heading"><div><p class="eyebrow">${view === "campus" ? "A PLACE FOR EVERY REPAIR" : view === "queue" ? "FROM OBSERVATION TO ACTION" : view === "history" ? "EVERY DECISION, PRESERVED" : "BUILT TO BE UNDERSTOOD"}</p><h1>${{ campus: "Keep the campus moving.", queue: "Give every repair a next step.", history: "The story behind the status.", about: "A small tool. A clear purpose." }[view]}</h1><p class="subtitle">${view === "campus" ? "Know what needs attention, who owns it, and what happens next." : view === "queue" ? "Review the reports. Link the evidence. Keep the work moving." : view === "history" ? "Reports and repair decisions, in the order they happened." : "FIXTRACE is a working demonstration with fictional school data."}</p></div>${historyCount === null ? button(icon("plus") + " Report a problem", "report", "", "primary") : button("Return to live workspace", "now", "", "primary")}</div>${view === "about" ? about() : `${timeline()}${view === "campus" ? campus(s, unreviewed) : view === "queue" ? queue(s) : history(s)}`}</main><footer class="footer"><span>FIXTRACE <span class="muted">/</span> Small repairs. Clear records.</span><span>Local demo · Times in IST</span></footer></div>`;
   bind();
 }
-function metrics(s,u){return `<section class="metrics" aria-label="Workspace counts"><div><span>Active repairs</span><strong>${String(countActive(s)).padStart(2,'0')}</strong><small>Jobs needing a next step</small></div><div><span>Awaiting review</span><strong>${String(u).padStart(2,'0')}</strong><small>Reports, not repair jobs</small></div><div><span>Completed</span><strong class="teal-text">${String(s.jobs.filter(j=>j.status==='Completed').length).padStart(2,'0')}</strong><small>With a verification note</small></div><div><span>Observations preserved</span><strong>${String(s.reports.length).padStart(2,'0')}</strong><small>Every report has a record</small></div></section>`;}
-function assetStatus(s,a){const jobs=sortedJobs(s).filter(j=>j.assetId===a.id);return jobs[0]?.priority.toLowerCase()||(s.reports.some(r=>r.assetId===a.id&&r.review==='Unreviewed')?'unreviewed':s.jobs.some(j=>j.assetId===a.id&&j.status==='Completed')?'completed':'clear');}
-function campus(s,u){return `${metrics(s,u)}<div class="campus-grid"><section class="map-card"><div class="card-header"><div><h2>Campus at a glance</h2><p>Choose an asset to follow its repair.</p></div><span class="floor-label">GROUND FLOOR</span></div><div class="floorplan"><svg class="blueprint" viewBox="0 0 760 490" aria-hidden="true"><defs><pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse"><path d="M 22 0 L 0 0 0 22" fill="none" stroke="#dfe6e8" stroke-width=".65"/></pattern><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#cfdbd6" stroke-width="2"/></pattern></defs><rect width="760" height="490" fill="url(#grid)"/><path d="M83 65H676V425H83Z" fill="#fff" stroke="#9aabad" stroke-width="6"/><path d="M83 219H330M390 219H676M83 282H320M390 282H676M384 65V175M384 282V425" fill="none" stroke="#9aabad" stroke-width="5"/><path d="M330 219v-47a47 47 0 0 1 47 47M320 282v45a45 45 0 0 0 45-45" fill="none" stroke="#a9b8bc" stroke-width="1.3"/><rect x="100" y="84" width="112" height="12" fill="#dce4ee"/><path d="M116 138h38v27h-38Zm80 0h38v27h-38Zm80 0h38v27h-38ZM116 180h38v20h-38Zm80 0h38v20h-38Zm80 0h38v20h-38Z" fill="#f2f4f7" stroke="#dbe1e8"/><path d="M417 87h13v110h-13Zm229 0h13v110h-13Z" fill="#dce4ee"/><rect x="468" y="113" width="112" height="48" rx="7" fill="#f2f4f7" stroke="#dbe1e8"/><path d="M111 326h70v24h-70Zm130 0h70v24h-70ZM111 380h70v24h-70Zm130 0h70v24h-70Z" fill="#f2f4f7" stroke="#dbe1e8"/><rect x="413" y="307" width="84" height="96" fill="url(#hatch)"/><path d="M570 322h60v18h-60Zm0 35h60v18h-60Zm0 35h60v18h-60Z" fill="#f2f4f7" stroke="#dbe1e8"/><text x="110" y="114">CLASSROOM A</text><text x="465" y="100">LIBRARY</text><text x="111" y="310">SCIENCE LAB</text><text x="559" y="307">WASH AREA</text><text x="101" y="259" class="corridor-text">CENTRAL CORRIDOR</text><path d="M42 94V55l-6 10m6-10 6 10" fill="none" stroke="#76858a"/><text x="37" y="43">N</text><path d="M89 457h90m-90-5v10m90-10v10" stroke="#76858a"/><text x="197" y="461">ILLUSTRATIVE PLAN · NOT TO SCALE</text></svg>${ASSETS.map(a=>`<button class="asset-pin ${assetStatus(s,a)} ${selection===a.id?'chosen':''}" style="left:${a.x}%;top:${a.y}%" data-asset="${a.id}" aria-pressed="${selection===a.id}" aria-label="${a.id}, ${a.name}, ${a.room}, ${assetStatus(s,a)}">${icon(assetIcon(a.id))}<span>${a.id}</span></button>`).join('')}</div><div class="map-legend"><span><i class="legend urgent"></i>Urgent</span><span><i class="legend high"></i>High</span><span><i class="legend unreviewed"></i>Review</span><span><i class="legend completed"></i>Completed</span><span><i class="legend clear"></i>No active issue</span></div><div class="map-mobile-hint">Use the asset list below for an equivalent view.</div><div class="asset-strip" aria-label="Select an asset">${ASSETS.map(a=>`<button class="asset-chip ${selection===a.id?'selected':''}" data-asset="${a.id}" aria-pressed="${selection===a.id}">${esc(a.id)} <span>${esc(a.room)}</span></button>`).join('')}</div></section>${assetDetail(s)}</div><section class="attention-section"><div class="section-heading"><h2>Next on the repair desk</h2><a href="#queue/${selection}">View repair queue ${icon('arrow')}</a></div><div class="attention-grid">${sortedJobs(s).slice(0,3).map(j=>jobCard(s,j)).join('')||'<p class="empty">No active repairs at this moment.</p>'}${u?`<button class="review-callout" data-action="review-queue"><span class="review-icon">${icon('queue')}</span><strong>${u} report${u===1?'':'s'} awaiting review</strong><span>A new observation needs a decision.</span><b>Review reports →</b></button>`:''}</div></section>`;}
-function jobCard(s,j){return `<button class="job-card" data-job="${j.id}"><div class="card-meta"><span class="mono">${j.id} · ${j.assetId}</span>${badge(j.priority)}</div><h3>${esc(j.title)}</h3><p>${esc(assetById(j.assetId).room)} <span>·</span> ${linked(s,j.id).length} linked report${linked(s,j.id).length===1?'':'s'}</p><div class="card-bottom">${badge(j.status)}<span>${duration(elapsed(s,j,now()))} elapsed</span></div></button>`;}
-function assetDetail(s){const a=assetById(selection),jobs=s.jobs.filter(j=>j.assetId===a.id),reports=s.reports.filter(r=>r.assetId===a.id);return `<aside class="asset-detail"><div class="detail-top"><span class="asset-large">${icon(assetIcon(a.id))}</span><span class="mono">ASSET / ${a.id}</span></div><h2>${esc(a.name)}</h2><p class="location">${icon('pin')}${esc(a.room)}</p><div class="detail-facts"><div><span>Reports</span><strong>${reports.length}</strong></div><div><span>Active jobs</span><strong>${jobs.filter(active).length}</strong></div></div><h3 class="subheading">Repair work</h3>${jobs.map(j=>`<button class="detail-job" data-job="${j.id}"><span>${badge(j.status)}</span><strong>${esc(j.title)}</strong><span class="muted">${j.assignee?esc(j.assignee):'Not assigned'} ${icon('arrow')}</span></button>`).join('')||'<p class="empty compact">No repair job recorded for this asset.</p>'}<h3 class="subheading">Recent observations</h3>${reports.slice(-2).reverse().map(r=>`<div class="observation"><span class="mono">${r.id} · ${esc(r.review)}</span><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small>${r.review==='Unreviewed'&&canEdit()?button('Review report','review',`data-id="${r.id}"`,'text-button'):''}</div>`).join('')||'<p class="empty compact">No reports yet. Add an observation when something needs attention.</p>'}${historyCount===null?button(icon('plus')+' Report this asset','report',`data-id="${a.id}"`,'secondary full'):''}</aside>`;}
-function queue(s){const pending=s.reports.filter(r=>r.review==='Unreviewed');return `<section class="review-section"><div class="section-heading"><h2>Awaiting review <span class="count-pill">${pending.length}</span></h2><p>Only a coordinator links reports to work.</p></div><div class="report-grid">${pending.map(r=>`<article class="report-card"><div class="card-meta"><span class="mono">${r.id} · ${r.assetId}</span>${badge('Unreviewed')}</div><h3>${esc(assetById(r.assetId).name)}</h3><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small>${canEdit()?button('Review & link '+icon('arrow'),'review',`data-id="${r.id}"`,'secondary full'):''}</article>`).join('')||'<p class="empty">All caught up. Every report has a review decision.</p>'}</div></section><section><div class="section-heading"><h2>Repair jobs</h2><div class="filters"><label for="job-filter" class="sr-only">Filter jobs</label><select id="job-filter">${[['active','Active'],['Completed','Completed'],['Cancelled','Cancelled'],['all','All jobs']].map(([v,l])=>`<option value="${v}" ${filter===v?'selected':''}>${l}</option>`).join('')}</select><label class="search-field">${icon('search')}<span class="sr-only">Search jobs</span><input id="search" placeholder="Search asset or repair…" type="search"></label></div></div><div class="queue-grid" id="job-list">${sortedJobs(s,filter).map(j=>jobCard(s,j)).join('')||'<p class="empty">No jobs in this view. Try another filter.</p>'}</div><p id="no-search" class="empty" hidden>No matching repairs. Try an asset ID or a different title.</p></section>`;}
-function history(){const ev=doc.events.slice(0,historyCount??doc.events.length).toReversed();return `<section class="activity-panel"><div class="section-heading"><h2>Activity log <span class="count-pill">${ev.length}</span></h2>${button(icon('export')+' Export history','export')}</div><p class="muted">Original observations remain intact. Corrections appear as new decisions.</p><ol class="activity-list">${ev.map(e=>`<li><span class="event-dot ${e.label==='Repair completed'?'done':''}">${e.label==='Repair completed'?icon('check'):icon('history')}</span><div><div class="event-heading"><strong>${esc(e.label)}</strong><time>${stamp(e.at)}</time></div><p>${esc(e.note||'Status change recorded.')}</p><small>${esc(e.entityId)} <span>·</span> ${esc(e.role)} <span>·</span> Event ${e.seq}</small></div></li>`).join('')||'<li class="empty">No events at this point in time.</li>'}</ol></section>`;}
-function about(){return `<section class="about-grid"><article class="about-card"><span class="eyebrow">THE IDEA</span><h2>One broken fan.<br>Several reports.<br>A clear repair record.</h2><p>FIXTRACE separates an observation from the work it creates. A coordinator decides which reports belong to a repair. Nothing gets silently merged or thrown away.</p><p>The campus plan and the queue show the same data. History playback lets you inspect the decisions behind a status.</p></article><article class="about-card"><h2>What this demo does</h2><ul><li>Report against one of six fictional assets.</li><li>Link observations without deleting evidence.</li><li>Assign, start, complete, reopen or cancel repair work.</li><li>Preserve repair and verification notes.</li><li>Replay the history and export a JSON copy.</li></ul><h3>What it does not claim</h3><p>No real school data, measured savings, customer validation, AI damage detection, or production security. Role switching is a demo control, not sign-in.</p></article><article class="about-card"><h2>Your demo workspace</h2><p>Records stay in this browser on this device. Clearing browser data removes them. Different devices and site addresses do not share a workspace. Export a copy to retain your history.</p><p>Do not enter names, private school locations, or other personal information. For a real hazard, contact school staff immediately; this tracker is not an emergency channel.</p><div class="button-row">${button(icon('export')+' Export data','export')}${button('Reset demo','reset','','danger')}</div></article><article class="about-card"><h2>Made to be inspectable</h2><p>Built with JavaScript, HTML and CSS, with no application framework or external AI API. AI assistance was used to plan, implement and test the demonstration. Student and teammate contributions are recorded separately in the project documentation.</p><p>Every change is an event. The status you see is reconstructed from those events. Times are shown in IST; elapsed time includes nights and weekends.</p><p class="muted">FIXTRACE v1.0 · Synthetic demonstration</p></article></section>`;}
-function bind(){
-  $('#role')?.addEventListener('change',e=>{role=e.target.value;render();$('#role').focus();toast(`${role} demo view selected.`);});
-  $('#timeline')?.addEventListener('input',e=>{historyCount=Number(e.target.value);render();$('#timeline').focus();});
-  $('#job-filter')?.addEventListener('change',e=>{filter=e.target.value;render();$('#job-filter').focus();});
-  $('#search')?.addEventListener('input',e=>{let found=0;document.querySelectorAll('#job-list .job-card').forEach(c=>{c.hidden=!c.textContent.toLowerCase().includes(e.target.value.toLowerCase());if(!c.hidden)found++;});$('#no-search').hidden=found>0;});
+function metrics(s, u) {
+  return `<section class="metrics" aria-label="Workspace counts"><div><span>Active repairs</span><strong>${String(countActive(s)).padStart(2, "0")}</strong><small>Jobs needing a next step</small></div><div><span>Awaiting review</span><strong>${String(u).padStart(2, "0")}</strong><small>Reports, not repair jobs</small></div><div><span>Completed</span><strong class="teal-text">${String(s.jobs.filter((j) => j.status === "Completed").length).padStart(2, "0")}</strong><small>With a verification note</small></div><div><span>Observations preserved</span><strong>${String(s.reports.length).padStart(2, "0")}</strong><small>Every report has a record</small></div></section>`;
 }
-function dialog(title,body){const d=$('#dialog');d.innerHTML=`<div class="dialog-header"><div><p class="eyebrow">FIXTRACE / ${esc(role.toUpperCase())}</p><h2 id="dialog-title">${title}</h2></div><button class="square" data-action="close" aria-label="Close dialog">${icon('close')}</button></div><div class="dialog-content">${body}</div>`;if(!d.open)d.showModal();}
-function field(label,name,kind='input',value='',options=''){const control=kind==='textarea'?`<textarea id="f-${name}" name="${name}" rows="3" maxlength="1000" required>${esc(value)}</textarea>`:kind==='select'?`<select id="f-${name}" name="${name}" required>${options}</select>`:`<input id="f-${name}" name="${name}" value="${esc(value)}" maxlength="${name==='title'?120:500}" required>`;return `<div class="field"><label for="f-${name}">${label}</label>${control}</div>`;}
-const opts=(list,chosen)=>list.map(x=>`<option ${x===chosen?'selected':''}>${esc(x)}</option>`).join('');
-const formFoot=(label)=>`<p id="form-error" class="form-error" role="alert" tabindex="-1" hidden></p><button type="button" class="secondary" data-action="refresh-data" hidden>Reload latest data and keep this draft</button><div class="form-footer"><button type="button" class="secondary" data-action="close">Cancel</button><button type="submit" class="primary">${label}</button></div>`;
-function attachForm(type,extra={},success){const form=$('#action-form');let id=crypto.randomUUID();form.addEventListener('submit',async e=>{e.preventDefault();if(busy)return;const data=Object.fromEntries(new FormData(form));const cmd={id,type,...extra,...data};await save(cmd,form,success);});}
-async function save(action,form,success){const commandRole=role;busy=true;const submit=form?.querySelector('[type="submit"]');if(submit)submit.disabled=true;try{
-    if(historyCount!==null)throw new Error('Return to Now before making changes.');
-    if(!navigator.locks)throw new Error('This browser cannot safely coordinate saved changes. Use a current browser on HTTPS or localhost.');
-    let next;await navigator.locks.request(STORAGE_KEY,()=>{next=commitStore(localStorage,doc,action,commandRole);});doc=next;$('#dialog').close();render();toast(action.type==='report'?`${doc.events.at(-1).entityId} saved. A coordinator can now review your report.`:success||doc.events.at(-1).label+'.');
-  }catch(e){const p=$('#form-error');const message=e.name==='QuotaExceededError'?'Storage is full. Export your records and free browser storage before retrying. Your draft is still here.':e.message;if(p){p.textContent=message;p.hidden=false;p.focus();if(message.includes('Another tab'))document.querySelector('[data-action="refresh-data"]').hidden=false;}else toast(message);}finally{busy=false;if(submit)submit.disabled=false;}}
-function reportForm(id=selection){if(historyCount!==null)return;dialog('Report a problem',`<p class="muted">Select the asset, then describe what you observed. No personal details, please.</p><form id="action-form">${field('Asset','assetId','select','',ASSETS.map(a=>`<option value="${a.id}" ${a.id===id?'selected':''}>${a.id} — ${esc(a.name)} · ${esc(a.room)}</option>`).join(''))}<div id="existing-reports" class="context-box"></div>${field('Category','category','select','',opts(CATEGORIES,assetById(id)?.kind))}${field('What did you notice?','description','textarea')}<p class="field-help">For a hazard, contact school staff immediately. This demo does not send alerts.</p>${formFoot('Save report')}</form>`);
-  const related=()=>{const a=$('#f-assetId').value,s=project(doc),jobs=s.jobs.filter(j=>j.assetId===a&&active(j));$('#existing-reports').innerHTML=`<strong>${s.reports.filter(r=>r.assetId===a).length} existing report(s) on this asset</strong><p>${jobs.length?jobs.map(j=>`${esc(j.id)}: ${esc(j.title)} — ${esc(j.status)}`).join('<br>'):'No active repair job yet.'}</p><small>Your new observation will be preserved for coordinator review.</small>`;};related();$('#f-assetId').addEventListener('change',()=>{related();$('#f-category').value=assetById($('#f-assetId').value).kind;});attachForm('report',{},'Report saved. A coordinator can now review it.');}
-function reviewForm(id){if(!canEdit())return;const s=project(doc),r=s.reports.find(r=>r.id===id);if(!r)return;const candidates=s.jobs.filter(j=>j.assetId===r.assetId&&active(j)&&j.id!==r.jobId);dialog(r.review==='Linked'?'Correct report link':'Review observation',`<div class="context-box"><span class="mono">${r.id} · ${r.assetId}</span><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small></div><div class="mode-buttons">${r.review==='Unreviewed'?button('Create repair job','review-mode',`data-mode="createJob" data-id="${id}"`,'secondary'):''}${candidates.length?button('Link existing job','review-mode',`data-mode="link" data-id="${id}"`,'secondary'):''}${r.review==='Unreviewed'?button('Reject report','review-mode',`data-mode="reject" data-id="${id}"`,'text-button'):''}</div><div id="review-fields"></div>`);reviewFields(id,r.review==='Linked'?'link':'createJob');}
-function reviewFields(id,type){const s=project(doc),r=s.reports.find(r=>r.id===id);let fields='';if(type==='createJob')fields=field('Repair title','title','input',`Inspect ${assetById(r.assetId).name.toLowerCase()}`)+field('Priority','priority','select','',opts(PRIORITIES,'Routine'))+field('Why this priority?','reason','textarea');if(type==='link'){const jobs=s.jobs.filter(j=>j.assetId===r.assetId&&active(j)&&j.id!==r.jobId);fields=jobs.length?field('Repair job for this asset','jobId','select','',jobs.map(j=>`<option value="${j.id}">${j.id} — ${esc(j.title)}</option>`).join(''))+field('Why do these observations belong together?','reason','textarea'):'<p>No other active job for this asset. Close this dialog to create one from an unreviewed report.</p>';if(!jobs.length){$('#review-fields').innerHTML=fields;return;}}if(type==='reject')fields=field('Why is this report rejected?','reason','textarea');$('#review-fields').innerHTML=`<form id="action-form">${fields}${formFoot(type==='createJob'?'Create repair job':type==='link'?'Link report':'Reject report')}</form>`;document.querySelectorAll('[data-action="review-mode"]').forEach(b=>{b.classList.toggle('selected',b.dataset.mode===type);b.setAttribute('aria-pressed',String(b.dataset.mode===type));});attachForm(type,{reportId:id});}
-function jobDetail(id){const s=currentState(),j=s.jobs.find(j=>j.id===id);if(!j)return;const reports=linked(s,id);const ids=new Set(reports.map(r=>r.id));const events=doc.events.slice(0,historyCount??doc.events.length).filter(e=>e.entityId===id||ids.has(e.entityId));dialog(esc(j.title),`<div class="job-detail-meta"><span class="mono">${j.id} · ${j.assetId} · ${esc(assetById(j.assetId).room)}</span><div>${badge(j.status)} ${badge(j.priority)}</div></div><div class="job-facts"><div><span>Elapsed since first report</span><strong>${duration(elapsed(s,j,now()))}</strong></div><div><span>Assigned to</span><strong>${esc(j.assignee||'Not assigned')}</strong></div></div><p class="priority-reason"><strong>Priority reason</strong> ${esc(j.priorityReason)}</p>${j.status==='Completed'?`<div class="completion-box"><h3>${icon('check')} Completion recorded</h3><p><strong>Work:</strong> ${esc(j.work)}</p><p><strong>Verified:</strong> ${esc(j.verification)}</p><small>${stamp(j.completedAt)}</small></div>`:''}${canEdit()?`<div class="job-actions">${j.status==='Open'||j.status==='Assigned'?button('Assign team','job-action',`data-type="assign" data-id="${id}"`,'primary'):''}${j.status==='Assigned'?button('Start work','job-action',`data-type="start" data-id="${id}"`,'primary'):''}${j.status==='In progress'?button('Complete repair','job-action',`data-type="complete" data-id="${id}"`,'primary'):''}${j.status==='Completed'?button('Reopen repair','job-action',`data-type="reopen" data-id="${id}"`,'secondary'):''}${active(j)?button('Change priority','job-action',`data-type="priority" data-id="${id}"`)+button('Cancel job','job-action',`data-type="cancel" data-id="${id}"`,'text-button'):''}</div>`:''}<h3 class="subheading">Linked observations · ${reports.length}</h3>${reports.map(r=>`<article class="observation"><span class="mono">${r.id} · ${stamp(r.createdAt)}</span><p>${esc(r.description)}</p>${canEdit()?button('Correct link','review',`data-id="${r.id}"`,'text-button'):''}</article>`).join('')||'<p>No reports currently linked; inspect history for earlier links.</p>'}<h3 class="subheading">Repair history</h3><ol class="mini-history">${events.toReversed().map(e=>`<li><strong>${esc(e.label)}</strong><small>${stamp(e.at)} · ${esc(e.role)}</small><p>${esc(e.note)}</p></li>`).join('')}</ol>`);}
-function jobForm(id,type){if(!canEdit())return;const j=project(doc).jobs.find(j=>j.id===id);let fields='',title='',cta='';if(type==='assign'){title='Assign repair';cta='Save assignment';fields=field('Maintenance team','assignee','select','',opts(TEAMS,j.assignee));}if(type==='start'){title='Start repair work';cta='Start work';fields=`<p>Record that ${esc(j.assignee)} has started this repair.</p>`;}if(type==='complete'){title='Record completion';cta='Complete repair';fields=field('What work was done?','work','textarea')+field('How was the repair checked?','verification','textarea');}if(type==='priority'){title='Change repair priority';cta='Save priority';fields=field('Priority','priority','select','',opts(PRIORITIES,j.priority))+field('Why this priority?','reason','textarea');}if(type==='reopen'||type==='cancel'){title=type==='reopen'?'Reopen repair':'Cancel repair job';cta=title;fields=field(type==='reopen'?'What needs further attention?':'Why is this job being cancelled?','reason','textarea')+`<p class="field-help">The previous decisions remain in the history.${type==='reopen'?' Assign a team again before work starts.':''}</p>`;}dialog(title,`<p class="muted">${esc(j.id)} · ${esc(j.title)}</p><form id="action-form">${fields}${formFoot(cta)}</form>`);attachForm(type,{jobId:id});}
-function exportData(){try{const raw=localStorage.getItem(STORAGE_KEY)||'{}';const blob=new Blob([raw],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`fixtrace-demo-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('Demo history exported.');}catch(e){toast(e.message);}}
-function reset(){dialog('Reset the synthetic demo?',`<p>This replaces the reports and repairs saved in this browser with a fresh fictional example. Export first if you want to keep your current history.</p><div class="button-row">${button('Export current data','export')}</div><form id="reset-form">${formFoot('Reset demo')}</form>`);$('#reset-form').addEventListener('submit',async e=>{e.preventDefault();try{if(!navigator.locks)throw new Error('Use a browser with Web Locks support.');const next=seed();await navigator.locks.request(STORAGE_KEY,()=>localStorage.setItem(STORAGE_KEY,JSON.stringify(next)));doc=next;loadError='';historyCount=null;$('#dialog').close();render();toast('Synthetic demo reset.');}catch(err){$('#form-error').hidden=false;$('#form-error').textContent=err.message;}});}
-document.addEventListener('click',e=>{
-  const asset=e.target.closest('[data-asset]');if(asset){selection=asset.dataset.asset;navigate('campus',selection);return;}
-  const job=e.target.closest('[data-job]');if(job){jobDetail(job.dataset.job);return;}
-  const el=e.target.closest('[data-action]');if(!el)return;const a=el.dataset.action;
-  if(a==='close')$('#dialog').close();
-  else if(a==='report')reportForm(el.dataset.id||selection);
-  else if(a==='review')reviewForm(el.dataset.id);
-  else if(a==='review-mode')reviewFields(el.dataset.id,el.dataset.mode);
-  else if(a==='job-action')jobForm(el.dataset.id,el.dataset.type);
-  else if(a==='review-queue')navigate('queue');
-  else if(a==='export')exportData();
-  else if(a==='reset')reset();
-  else if(a==='refresh-data'){try{doc=readStore(localStorage);el.hidden=true;$('#form-error').hidden=true;toast('Latest data loaded. Check your draft before saving again.');}catch(err){toast(err.message);}}
-  else if(['previous','next','now'].includes(a)){historyCount=a==='now'?null:a==='previous'?Math.max(0,(historyCount??doc.events.length)-1):Math.min(doc.events.length,(historyCount??doc.events.length)+1);render();document.querySelector(`[data-action="${a}"]`)?.focus();}
+function assetStatus(s, a) {
+  const jobs = sortedJobs(s).filter((j) => j.assetId === a.id);
+  return (
+    jobs[0]?.priority.toLowerCase() ||
+    (s.reports.some((r) => r.assetId === a.id && r.review === "Unreviewed")
+      ? "unreviewed"
+      : s.jobs.some((j) => j.assetId === a.id && j.status === "Completed")
+        ? "completed"
+        : "clear")
+  );
+}
+function campus(s, u) {
+  return `${metrics(s, u)}<div class="campus-grid"><section class="map-card"><div class="card-header"><div><h2>Campus at a glance</h2><p>Choose an asset to follow its repair.</p></div><span class="floor-label">GROUND FLOOR</span></div><div class="floorplan"><svg class="blueprint" viewBox="0 0 760 490" aria-hidden="true"><defs><pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse"><path d="M 22 0 L 0 0 0 22" fill="none" stroke="#dfe6e8" stroke-width=".65"/></pattern><pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="8" stroke="#cfdbd6" stroke-width="2"/></pattern></defs><rect width="760" height="490" fill="url(#grid)"/><path d="M83 65H676V425H83Z" fill="#fff" stroke="#9aabad" stroke-width="6"/><path d="M83 219H330M390 219H676M83 282H320M390 282H676M384 65V175M384 282V425" fill="none" stroke="#9aabad" stroke-width="5"/><path d="M330 219v-47a47 47 0 0 1 47 47M320 282v45a45 45 0 0 0 45-45" fill="none" stroke="#a9b8bc" stroke-width="1.3"/><rect x="100" y="84" width="112" height="12" fill="#dce4ee"/><path d="M116 138h38v27h-38Zm80 0h38v27h-38Zm80 0h38v27h-38ZM116 180h38v20h-38Zm80 0h38v20h-38Zm80 0h38v20h-38Z" fill="#f2f4f7" stroke="#dbe1e8"/><path d="M417 87h13v110h-13Zm229 0h13v110h-13Z" fill="#dce4ee"/><rect x="468" y="113" width="112" height="48" rx="7" fill="#f2f4f7" stroke="#dbe1e8"/><path d="M111 326h70v24h-70Zm130 0h70v24h-70ZM111 380h70v24h-70Zm130 0h70v24h-70Z" fill="#f2f4f7" stroke="#dbe1e8"/><rect x="413" y="307" width="84" height="96" fill="url(#hatch)"/><path d="M570 322h60v18h-60Zm0 35h60v18h-60Zm0 35h60v18h-60Z" fill="#f2f4f7" stroke="#dbe1e8"/><text x="110" y="114">CLASSROOM A</text><text x="465" y="100">LIBRARY</text><text x="111" y="310">SCIENCE LAB</text><text x="559" y="307">WASH AREA</text><text x="101" y="259" class="corridor-text">CENTRAL CORRIDOR</text><path d="M42 94V55l-6 10m6-10 6 10" fill="none" stroke="#76858a"/><text x="37" y="43">N</text><path d="M89 457h90m-90-5v10m90-10v10" stroke="#76858a"/><text x="197" y="461">ILLUSTRATIVE PLAN · NOT TO SCALE</text></svg>${ASSETS.map((a) => `<button class="asset-pin ${assetStatus(s, a)} ${selection === a.id ? "chosen" : ""}" style="left:${a.x}%;top:${a.y}%" data-asset="${a.id}" aria-pressed="${selection === a.id}" aria-label="${a.id}, ${a.name}, ${a.room}, ${assetStatus(s, a)}">${icon(assetIcon(a.id))}<span>${a.id}</span></button>`).join("")}</div><div class="map-legend"><span><i class="legend urgent"></i>Urgent</span><span><i class="legend high"></i>High</span><span><i class="legend unreviewed"></i>Review</span><span><i class="legend completed"></i>Completed</span><span><i class="legend clear"></i>No active issue</span></div><div class="map-mobile-hint">Use the asset list below for an equivalent view.</div><div class="asset-strip" aria-label="Select an asset">${ASSETS.map((a) => `<button class="asset-chip ${selection === a.id ? "selected" : ""}" data-asset="${a.id}" aria-pressed="${selection === a.id}">${esc(a.id)} <span>${esc(a.room)}</span></button>`).join("")}</div></section>${assetDetail(s)}</div><section class="attention-section"><div class="section-heading"><h2>Next on the repair desk</h2><a href="#queue/${selection}">View repair queue ${icon("arrow")}</a></div><div class="attention-grid">${
+    sortedJobs(s)
+      .slice(0, 3)
+      .map((j) => jobCard(s, j))
+      .join("") || '<p class="empty">No active repairs at this moment.</p>'
+  }${u ? `<button class="review-callout" data-action="review-queue"><span class="review-icon">${icon("queue")}</span><strong>${u} report${u === 1 ? "" : "s"} awaiting review</strong><span>A new observation needs a decision.</span><b>Review reports →</b></button>` : ""}</div></section>`;
+}
+function jobCard(s, j) {
+  return `<button class="job-card" data-job="${j.id}"><div class="card-meta"><span class="mono">${j.id} · ${j.assetId}</span>${badge(j.priority)}</div><h3>${esc(j.title)}</h3><p>${esc(assetById(j.assetId).room)} <span>·</span> ${linked(s, j.id).length} linked report${linked(s, j.id).length === 1 ? "" : "s"}</p><div class="card-bottom">${badge(j.status)}<span>${duration(elapsed(s, j, now()))} elapsed</span></div></button>`;
+}
+function assetDetail(s) {
+  const a = assetById(selection),
+    jobs = s.jobs.filter((j) => j.assetId === a.id),
+    reports = s.reports.filter((r) => r.assetId === a.id);
+  return `<aside class="asset-detail"><div class="detail-top"><span class="asset-large">${icon(assetIcon(a.id))}</span><span class="mono">ASSET / ${a.id}</span></div><h2>${esc(a.name)}</h2><p class="location">${icon("pin")}${esc(a.room)}</p><div class="detail-facts"><div><span>Reports</span><strong>${reports.length}</strong></div><div><span>Active jobs</span><strong>${jobs.filter(active).length}</strong></div></div><h3 class="subheading">Repair work</h3>${jobs.map((j) => `<button class="detail-job" data-job="${j.id}"><span>${badge(j.status)}</span><strong>${esc(j.title)}</strong><span class="muted">${j.assignee ? esc(j.assignee) : "Not assigned"} ${icon("arrow")}</span></button>`).join("") || '<p class="empty compact">No repair job recorded for this asset.</p>'}<h3 class="subheading">Recent observations</h3>${
+    reports
+      .slice(-2)
+      .reverse()
+      .map(
+        (r) =>
+          `<div class="observation"><span class="mono">${r.id} · ${esc(r.review)}</span><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small>${r.review === "Unreviewed" && canEdit() ? button("Review report", "review", `data-id="${r.id}"`, "text-button") : ""}</div>`,
+      )
+      .join("") ||
+    '<p class="empty compact">No reports yet. Add an observation when something needs attention.</p>'
+  }${historyCount === null ? button(icon("plus") + " Report this asset", "report", `data-id="${a.id}"`, "secondary full") : ""}</aside>`;
+}
+function queue(s) {
+  const pending = s.reports.filter((r) => r.review === "Unreviewed");
+  return `<section class="review-section"><div class="section-heading"><h2>Awaiting review <span class="count-pill">${pending.length}</span></h2><p>Only a coordinator links reports to work.</p></div><div class="report-grid">${pending.map((r) => `<article class="report-card"><div class="card-meta"><span class="mono">${r.id} · ${r.assetId}</span>${badge("Unreviewed")}</div><h3>${esc(assetById(r.assetId).name)}</h3><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small>${canEdit() ? button("Review & link " + icon("arrow"), "review", `data-id="${r.id}"`, "secondary full") : ""}</article>`).join("") || '<p class="empty">All caught up. Every report has a review decision.</p>'}</div></section><section><div class="section-heading"><h2>Repair jobs</h2><div class="filters"><label for="job-filter" class="sr-only">Filter jobs</label><select id="job-filter">${[
+    ["active", "Active"],
+    ["Completed", "Completed"],
+    ["Cancelled", "Cancelled"],
+    ["all", "All jobs"],
+  ]
+    .map(
+      ([v, l]) =>
+        `<option value="${v}" ${filter === v ? "selected" : ""}>${l}</option>`,
+    )
+    .join(
+      "",
+    )}</select><label class="search-field">${icon("search")}<span class="sr-only">Search jobs</span><input id="search" placeholder="Search asset or repair…" type="search"></label></div></div><div class="queue-grid" id="job-list">${
+    sortedJobs(s, filter)
+      .map((j) => jobCard(s, j))
+      .join("") ||
+    '<p class="empty">No jobs in this view. Try another filter.</p>'
+  }</div><p id="no-search" class="empty" hidden>No matching repairs. Try an asset ID or a different title.</p></section>`;
+}
+function history() {
+  const ev = doc.events
+    .slice(0, historyCount ?? doc.events.length)
+    .toReversed();
+  return `<section class="activity-panel"><div class="section-heading"><h2>Activity log <span class="count-pill">${ev.length}</span></h2>${button(icon("export") + " Export history", "export")}</div><p class="muted">Original observations remain intact. Corrections appear as new decisions.</p><ol class="activity-list">${ev.map((e) => `<li><span class="event-dot ${e.label === "Repair completed" ? "done" : ""}">${e.label === "Repair completed" ? icon("check") : icon("history")}</span><div><div class="event-heading"><strong>${esc(e.label)}</strong><time>${stamp(e.at)}</time></div><p>${esc(e.note || "Status change recorded.")}</p><small>${esc(e.entityId)} <span>·</span> ${esc(e.role)} <span>·</span> Event ${e.seq}</small></div></li>`).join("") || '<li class="empty">No events at this point in time.</li>'}</ol></section>`;
+}
+function about() {
+  return `<section class="about-grid"><article class="about-card"><span class="eyebrow">THE IDEA</span><h2>One broken fan.<br>Several reports.<br>A clear repair record.</h2><p>FIXTRACE separates an observation from the work it creates. A coordinator decides which reports belong to a repair. Nothing gets silently merged or thrown away.</p><p>The campus plan and the queue show the same data. History playback lets you inspect the decisions behind a status.</p></article><article class="about-card"><h2>What this demo does</h2><ul><li>Report against one of six fictional assets.</li><li>Link observations without deleting evidence.</li><li>Assign, start, complete, reopen or cancel repair work.</li><li>Preserve repair and verification notes.</li><li>Replay the history and export a JSON copy.</li></ul><h3>What it does not claim</h3><p>No real school data, measured savings, customer validation, AI damage detection, or production security. Role switching is a demo control, not sign-in.</p></article><article class="about-card"><h2>Your demo workspace</h2><p>Records stay in this browser on this device. Clearing browser data removes them. Different devices and site addresses do not share a workspace. Export a copy to retain your history.</p><p>Do not enter names, private school locations, or other personal information. For a real hazard, contact school staff immediately; this tracker is not an emergency channel.</p><div class="button-row">${button(icon("export") + " Export data", "export")}${button("Reset demo", "reset", "", "danger")}</div></article><article class="about-card"><h2>Made to be inspectable</h2><p>Built with JavaScript, HTML and CSS, with no application framework or external AI API. AI assistance was used to plan, implement and test the demonstration. Student and teammate contributions are recorded separately in the project documentation.</p><p>Every change is an event. The status you see is reconstructed from those events. Times are shown in IST; elapsed time includes nights and weekends.</p><p class="muted">FIXTRACE v1.0 · Synthetic demonstration</p></article></section>`;
+}
+function bind() {
+  $("#role")?.addEventListener("change", (e) => {
+    role = e.target.value;
+    render();
+    $("#role").focus();
+    toast(`${role} demo view selected.`);
+  });
+  $("#timeline")?.addEventListener("input", (e) => {
+    historyCount = Number(e.target.value);
+    render();
+    $("#timeline").focus();
+  });
+  $("#job-filter")?.addEventListener("change", (e) => {
+    filter = e.target.value;
+    render();
+    $("#job-filter").focus();
+  });
+  $("#search")?.addEventListener("input", (e) => {
+    let found = 0;
+    document.querySelectorAll("#job-list .job-card").forEach((c) => {
+      c.hidden = !c.textContent
+        .toLowerCase()
+        .includes(e.target.value.toLowerCase());
+      if (!c.hidden) found++;
+    });
+    $("#no-search").hidden = found > 0;
+  });
+}
+function dialog(title, body) {
+  const d = $("#dialog");
+  d.innerHTML = `<div class="dialog-header"><div><p class="eyebrow">FIXTRACE / ${esc(role.toUpperCase())}</p><h2 id="dialog-title">${title}</h2></div><button class="square" data-action="close" aria-label="Close dialog">${icon("close")}</button></div><div class="dialog-content">${body}</div>`;
+  if (!d.open) d.showModal();
+}
+function field(label, name, kind = "input", value = "", options = "") {
+  const control =
+    kind === "textarea"
+      ? `<textarea id="f-${name}" name="${name}" rows="3" maxlength="1000" required>${esc(value)}</textarea>`
+      : kind === "select"
+        ? `<select id="f-${name}" name="${name}" required>${options}</select>`
+        : `<input id="f-${name}" name="${name}" value="${esc(value)}" maxlength="${name === "title" ? 120 : 500}" required>`;
+  return `<div class="field"><label for="f-${name}">${label}</label>${control}</div>`;
+}
+const opts = (list, chosen) =>
+  list
+    .map((x) => `<option ${x === chosen ? "selected" : ""}>${esc(x)}</option>`)
+    .join("");
+const formFoot = (label) =>
+  `<p id="form-error" class="form-error" role="alert" tabindex="-1" hidden></p><button type="button" class="secondary" data-action="refresh-data" hidden>Reload latest data and keep this draft</button><div class="form-footer"><button type="button" class="secondary" data-action="close">Cancel</button><button type="submit" class="primary">${label}</button></div>`;
+function attachForm(type, extra = {}, success) {
+  const form = $("#action-form");
+  let id = crypto.randomUUID();
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const data = Object.fromEntries(new FormData(form));
+    const cmd = { id, type, ...extra, ...data };
+    await save(cmd, form, success);
+  });
+}
+async function save(action, form, success) {
+  const commandRole = role;
+  busy = true;
+  const submit = form?.querySelector('[type="submit"]');
+  if (submit) submit.disabled = true;
+  try {
+    if (historyCount !== null)
+      throw new Error("Return to Now before making changes.");
+    if (!navigator.locks)
+      throw new Error(
+        "This browser cannot safely coordinate saved changes. Use a current browser on HTTPS or localhost.",
+      );
+    let next;
+    await navigator.locks.request(STORAGE_KEY, () => {
+      next = commitStore(localStorage, doc, action, commandRole);
+    });
+    doc = next;
+    $("#dialog").close();
+    render();
+    toast(
+      action.type === "report"
+        ? `${doc.events.at(-1).entityId} saved. A coordinator can now review your report.`
+        : success || doc.events.at(-1).label + ".",
+    );
+  } catch (e) {
+    const p = $("#form-error");
+    const message =
+      e.name === "QuotaExceededError"
+        ? "Storage is full. Export your records and free browser storage before retrying. Your draft is still here."
+        : e.message;
+    if (p) {
+      p.textContent = message;
+      p.hidden = false;
+      p.focus();
+      if (message.includes("Another tab"))
+        document.querySelector('[data-action="refresh-data"]').hidden = false;
+    } else toast(message);
+  } finally {
+    busy = false;
+    if (submit) submit.disabled = false;
+  }
+}
+function reportForm(id = selection) {
+  if (historyCount !== null) return;
+  dialog(
+    "Report a problem",
+    `<p class="muted">Select the asset, then describe what you observed. No personal details, please.</p><form id="action-form">${field("Asset", "assetId", "select", "", ASSETS.map((a) => `<option value="${a.id}" ${a.id === id ? "selected" : ""}>${a.id} — ${esc(a.name)} · ${esc(a.room)}</option>`).join(""))}<div id="existing-reports" class="context-box"></div>${field("Category", "category", "select", "", opts(CATEGORIES, assetById(id)?.kind))}${field("What did you notice?", "description", "textarea")}<p class="field-help">For a hazard, contact school staff immediately. This demo does not send alerts.</p>${formFoot("Save report")}</form>`,
+  );
+  const related = () => {
+    const a = $("#f-assetId").value,
+      s = project(doc),
+      jobs = s.jobs.filter((j) => j.assetId === a && active(j));
+    $("#existing-reports").innerHTML =
+      `<strong>${s.reports.filter((r) => r.assetId === a).length} existing report(s) on this asset</strong><p>${jobs.length ? jobs.map((j) => `${esc(j.id)}: ${esc(j.title)} — ${esc(j.status)}`).join("<br>") : "No active repair job yet."}</p><small>Your new observation will be preserved for coordinator review.</small>`;
+  };
+  related();
+  $("#f-assetId").addEventListener("change", () => {
+    related();
+    $("#f-category").value = assetById($("#f-assetId").value).kind;
+  });
+  attachForm("report", {}, "Report saved. A coordinator can now review it.");
+}
+function reviewForm(id) {
+  if (!canEdit()) return;
+  const s = project(doc),
+    r = s.reports.find((r) => r.id === id);
+  if (!r) return;
+  const candidates = s.jobs.filter(
+    (j) => j.assetId === r.assetId && active(j) && j.id !== r.jobId,
+  );
+  dialog(
+    r.review === "Linked" ? "Correct report link" : "Review observation",
+    `<div class="context-box"><span class="mono">${r.id} · ${r.assetId}</span><p>${esc(r.description)}</p><small>${stamp(r.createdAt)}</small></div><div class="mode-buttons">${r.review === "Unreviewed" ? button("Create repair job", "review-mode", `data-mode="createJob" data-id="${id}"`, "secondary") : ""}${candidates.length ? button("Link existing job", "review-mode", `data-mode="link" data-id="${id}"`, "secondary") : ""}${r.review === "Unreviewed" ? button("Reject report", "review-mode", `data-mode="reject" data-id="${id}"`, "text-button") : ""}</div><div id="review-fields"></div>`,
+  );
+  reviewFields(id, r.review === "Linked" ? "link" : "createJob");
+}
+function reviewFields(id, type) {
+  const s = project(doc),
+    r = s.reports.find((r) => r.id === id);
+  let fields = "";
+  if (type === "createJob")
+    fields =
+      field(
+        "Repair title",
+        "title",
+        "input",
+        `Inspect ${assetById(r.assetId).name.toLowerCase()}`,
+      ) +
+      field("Priority", "priority", "select", "", opts(PRIORITIES, "Routine")) +
+      field("Why this priority?", "reason", "textarea");
+  if (type === "link") {
+    const jobs = s.jobs.filter(
+      (j) => j.assetId === r.assetId && active(j) && j.id !== r.jobId,
+    );
+    fields = jobs.length
+      ? field(
+          "Repair job for this asset",
+          "jobId",
+          "select",
+          "",
+          jobs
+            .map(
+              (j) =>
+                `<option value="${j.id}">${j.id} — ${esc(j.title)}</option>`,
+            )
+            .join(""),
+        ) +
+        field(
+          "Why do these observations belong together?",
+          "reason",
+          "textarea",
+        )
+      : "<p>No other active job for this asset. Close this dialog to create one from an unreviewed report.</p>";
+    if (!jobs.length) {
+      $("#review-fields").innerHTML = fields;
+      return;
+    }
+  }
+  if (type === "reject")
+    fields = field("Why is this report rejected?", "reason", "textarea");
+  $("#review-fields").innerHTML =
+    `<form id="action-form">${fields}${formFoot(type === "createJob" ? "Create repair job" : type === "link" ? "Link report" : "Reject report")}</form>`;
+  document.querySelectorAll('[data-action="review-mode"]').forEach((b) => {
+    b.classList.toggle("selected", b.dataset.mode === type);
+    b.setAttribute("aria-pressed", String(b.dataset.mode === type));
+  });
+  attachForm(type, { reportId: id });
+}
+function jobDetail(id) {
+  const s = currentState(),
+    j = s.jobs.find((j) => j.id === id);
+  if (!j) return;
+  const reports = linked(s, id);
+  const ids = new Set(reports.map((r) => r.id));
+  const events = doc.events
+    .slice(0, historyCount ?? doc.events.length)
+    .filter((e) => e.entityId === id || ids.has(e.entityId));
+  dialog(
+    esc(j.title),
+    `<div class="job-detail-meta"><span class="mono">${j.id} · ${j.assetId} · ${esc(assetById(j.assetId).room)}</span><div>${badge(j.status)} ${badge(j.priority)}</div></div><div class="job-facts"><div><span>Elapsed since first report</span><strong>${duration(elapsed(s, j, now()))}</strong></div><div><span>Assigned to</span><strong>${esc(j.assignee || "Not assigned")}</strong></div></div><p class="priority-reason"><strong>Priority reason</strong> ${esc(j.priorityReason)}</p>${j.status === "Completed" ? `<div class="completion-box"><h3>${icon("check")} Completion recorded</h3><p><strong>Work:</strong> ${esc(j.work)}</p><p><strong>Verified:</strong> ${esc(j.verification)}</p><small>${stamp(j.completedAt)}</small></div>` : ""}${canEdit() ? `<div class="job-actions">${j.status === "Open" || j.status === "Assigned" ? button("Assign team", "job-action", `data-type="assign" data-id="${id}"`, "primary") : ""}${j.status === "Assigned" ? button("Start work", "job-action", `data-type="start" data-id="${id}"`, "primary") : ""}${j.status === "In progress" ? button("Complete repair", "job-action", `data-type="complete" data-id="${id}"`, "primary") : ""}${j.status === "Completed" ? button("Reopen repair", "job-action", `data-type="reopen" data-id="${id}"`, "secondary") : ""}${active(j) ? button("Change priority", "job-action", `data-type="priority" data-id="${id}"`) + button("Cancel job", "job-action", `data-type="cancel" data-id="${id}"`, "text-button") : ""}</div>` : ""}<h3 class="subheading">Linked observations · ${reports.length}</h3>${reports.map((r) => `<article class="observation"><span class="mono">${r.id} · ${stamp(r.createdAt)}</span><p>${esc(r.description)}</p>${canEdit() ? button("Correct link", "review", `data-id="${r.id}"`, "text-button") : ""}</article>`).join("") || "<p>No reports currently linked; inspect history for earlier links.</p>"}<h3 class="subheading">Repair history</h3><ol class="mini-history">${events
+      .toReversed()
+      .map(
+        (e) =>
+          `<li><strong>${esc(e.label)}</strong><small>${stamp(e.at)} · ${esc(e.role)}</small><p>${esc(e.note)}</p></li>`,
+      )
+      .join("")}</ol>`,
+  );
+}
+function jobForm(id, type) {
+  if (!canEdit()) return;
+  const j = project(doc).jobs.find((j) => j.id === id);
+  let fields = "",
+    title = "",
+    cta = "";
+  if (type === "assign") {
+    title = "Assign repair";
+    cta = "Save assignment";
+    fields = field(
+      "Maintenance team",
+      "assignee",
+      "select",
+      "",
+      opts(TEAMS, j.assignee),
+    );
+  }
+  if (type === "start") {
+    title = "Start repair work";
+    cta = "Start work";
+    fields = `<p>Record that ${esc(j.assignee)} has started this repair.</p>`;
+  }
+  if (type === "complete") {
+    title = "Record completion";
+    cta = "Complete repair";
+    fields =
+      field("What work was done?", "work", "textarea") +
+      field("How was the repair checked?", "verification", "textarea");
+  }
+  if (type === "priority") {
+    title = "Change repair priority";
+    cta = "Save priority";
+    fields =
+      field(
+        "Priority",
+        "priority",
+        "select",
+        "",
+        opts(PRIORITIES, j.priority),
+      ) + field("Why this priority?", "reason", "textarea");
+  }
+  if (type === "reopen" || type === "cancel") {
+    title = type === "reopen" ? "Reopen repair" : "Cancel repair job";
+    cta = title;
+    fields =
+      field(
+        type === "reopen"
+          ? "What needs further attention?"
+          : "Why is this job being cancelled?",
+        "reason",
+        "textarea",
+      ) +
+      `<p class="field-help">The previous decisions remain in the history.${type === "reopen" ? " Assign a team again before work starts." : ""}</p>`;
+  }
+  dialog(
+    title,
+    `<p class="muted">${esc(j.id)} · ${esc(j.title)}</p><form id="action-form">${fields}${formFoot(cta)}</form>`,
+  );
+  attachForm(type, { jobId: id });
+}
+function exportData() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY) || "{}";
+    const blob = new Blob([raw], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fixtrace-demo-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Demo history exported.");
+  } catch (e) {
+    toast(e.message);
+  }
+}
+function reset() {
+  dialog(
+    "Reset the synthetic demo?",
+    `<p>This replaces the reports and repairs saved in this browser with a fresh fictional example. Export first if you want to keep your current history.</p><div class="button-row">${button("Export current data", "export")}</div><form id="reset-form">${formFoot("Reset demo")}</form>`,
+  );
+  $("#reset-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      if (!navigator.locks)
+        throw new Error("Use a browser with Web Locks support.");
+      const next = seed();
+      await navigator.locks.request(STORAGE_KEY, () =>
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next)),
+      );
+      doc = next;
+      loadError = "";
+      historyCount = null;
+      $("#dialog").close();
+      render();
+      toast("Synthetic demo reset.");
+    } catch (err) {
+      $("#form-error").hidden = false;
+      $("#form-error").textContent = err.message;
+    }
+  });
+}
+document.addEventListener("click", (e) => {
+  const asset = e.target.closest("[data-asset]");
+  if (asset) {
+    selection = asset.dataset.asset;
+    navigate("campus", selection);
+    return;
+  }
+  const job = e.target.closest("[data-job]");
+  if (job) {
+    jobDetail(job.dataset.job);
+    return;
+  }
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const a = el.dataset.action;
+  if (a === "close") $("#dialog").close();
+  else if (a === "report") reportForm(el.dataset.id || selection);
+  else if (a === "review") reviewForm(el.dataset.id);
+  else if (a === "review-mode") reviewFields(el.dataset.id, el.dataset.mode);
+  else if (a === "job-action") jobForm(el.dataset.id, el.dataset.type);
+  else if (a === "review-queue") navigate("queue");
+  else if (a === "export") exportData();
+  else if (a === "reset") reset();
+  else if (a === "refresh-data") {
+    try {
+      doc = readStore(localStorage);
+      el.hidden = true;
+      $("#form-error").hidden = true;
+      toast("Latest data loaded. Check your draft before saving again.");
+    } catch (err) {
+      toast(err.message);
+    }
+  } else if (["previous", "next", "now"].includes(a)) {
+    historyCount =
+      a === "now"
+        ? null
+        : a === "previous"
+          ? Math.max(0, (historyCount ?? doc.events.length) - 1)
+          : Math.min(
+              doc.events.length,
+              (historyCount ?? doc.events.length) + 1,
+            );
+    render();
+    document.querySelector(`[data-action="${a}"]`)?.focus();
+  }
 });
-window.addEventListener('hashchange',()=>{route();$('#main')?.focus({preventScroll:true});});
-window.addEventListener('storage',e=>{if(e.key===STORAGE_KEY){try{if(!$('#dialog').open){doc=readStore(localStorage);loadError='';if(historyCount!==null)historyCount=Math.min(historyCount,doc.events.length);render();}toast('Another tab changed the demo. Reload before saving an open form.');}catch(err){loadError=err.message;if(!$('#dialog').open)render();}}});
+window.addEventListener("hashchange", () => {
+  route();
+  $("#main")?.focus({ preventScroll: true });
+});
+window.addEventListener("storage", (e) => {
+  if (e.key === STORAGE_KEY) {
+    try {
+      if (!$("#dialog").open) {
+        doc = readStore(localStorage);
+        loadError = "";
+        if (historyCount !== null)
+          historyCount = Math.min(historyCount, doc.events.length);
+        render();
+      }
+      toast("Another tab changed the demo. Reload before saving an open form.");
+    } catch (err) {
+      loadError = err.message;
+      if (!$("#dialog").open) render();
+    }
+  }
+});
 // Native dialog restores focus to its opener; after a render the original node may be gone.
-$('#dialog').addEventListener('close',()=>{if(document.activeElement===document.body)$('#main')?.focus({preventScroll:true});});
+$("#dialog").addEventListener("close", () => {
+  if (document.activeElement === document.body)
+    $("#main")?.focus({ preventScroll: true });
+});
 route();
