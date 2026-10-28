@@ -1,0 +1,10 @@
+{
+  "name": "fixtrace-campus-desk",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Synthetic school repair reporting and maintenance history demo",
+  "scripts": {"start": "node server.mjs", "test": "node --test tests/*.test.mjs", "check": "node --check dist/app.js && node --check dist/core.js && node --check dist/storage.js"},
+  "engines": {"node": ">=22"},
+  "license": "MIT"
+}
